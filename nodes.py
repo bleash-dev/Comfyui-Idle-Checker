@@ -75,40 +75,10 @@ class IdleDetectorExtension:
         except Exception as e:
             print(f"Error reading RunPod metadata file: {e}")
         
-        # Method 2: Check hostname (sometimes set to pod ID)
-        try:
-            import socket
-            hostname = socket.gethostname()
-            # RunPod pod IDs are typically alphanumeric, check if hostname looks like one
-            if len(hostname) > 8 and hostname.replace('-', '').isalnum():
-                print(f"Using hostname as pod ID: {hostname}")
-                return hostname
-        except Exception as e:
-            print(f"Error getting hostname: {e}")
-        
-        # Method 3: Check environment variable (if manually set)
-        env_pod_id = os.getenv("RUNPOD_POD_ID")
+        env_pod_id = os.getenv("RUNPOD_POD_ID", "")
         if env_pod_id and env_pod_id != "unknown":
             print(f"Found pod ID from environment variable: {env_pod_id}")
             return env_pod_id
-        
-        # Method 4: Fallback to runpod CLI (original method)
-        try:
-            result = subprocess.run(
-                ["runpod", "get", "pod"], 
-                capture_output=True, 
-                text=True, 
-                timeout=10
-            )
-            if result.returncode == 0:
-                lines = result.stdout.strip().split('\n')
-                for line in lines:
-                    if 'Pod ID:' in line or 'ID:' in line:
-                        pod_id = line.split(':')[-1].strip()
-                        print(f"Found pod ID from RunPod CLI: {pod_id}")
-                        return pod_id
-        except Exception as e:
-            print(f"Error using RunPod CLI: {e}")
         
         print("Could not determine pod ID, using 'unknown'")
         return "unknown"
