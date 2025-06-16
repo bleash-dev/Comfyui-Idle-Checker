@@ -82,12 +82,39 @@ class IdleDetectorExtension:
         
         print("Could not determine pod ID, using 'unknown'")
         return "unknown"
+    
+    def _get_hmac_signature(self):
+        """Generate HMAC signature for secure API calls"""
+        try:
+            import hmac
+            import hashlib
+            secret_key = os.getenv("WEBHOOK_SECRET_KEY", "")
+            if not secret_key:
+                raise ValueError("WEBHOOK_SECRET_KEY environment variable is not set")
+            pod_id = self._get_current_pod_id()
+
+            message = json.dumps({
+                "pod_id": pod_id,
+                "timestamp": int(time.time())
+            })
+
+            signature = hmac.new(secret_key.encode(), message.encode(), hashlib.sha256).hexdigest()
+            return signature
+        except Exception as e:
+            print(f"Error generating HMAC signature: {e}")
+            return None
 
     def _call_shutdown_endpoint(self, pod_id):
         """Call the shutdown endpoint with pod ID"""
         try:
-            params = {"podId": pod_id}
-            response = requests.get(self.shutdown_endpoint, params=params, timeout=30)
+            params = {"pod_id": pod_id}
+            response = requests.post(self.shutdown_endpoint, 
+                    json=params, 
+                                     headers={
+                "Content-Type": "application/json",
+                "X-Signature": self._get_hmac_signature()
+            }, timeout=30)
+
             print(f"Shutdown endpoint called for pod {pod_id}. Response: {response.status_code}")
             return response.status_code == 200
         except Exception as e:
