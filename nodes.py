@@ -7,6 +7,9 @@ import requests
 from datetime import datetime
 from pathlib import Path
 
+# Find the ComfyUI root directory to locate the workflows folder
+comfyui_root_path = Path(__file__).parent.parent.parent
+
 class IdleDetectorExtension:
     """
     A global extension that monitors ComfyUI idle status and automatically shuts down idle pods
@@ -14,6 +17,7 @@ class IdleDetectorExtension:
     
     def __init__(self):
         self.status_dir = Path.home() / ".custom_pod_stats"
+        self.workflows_path = comfyui_root_path / "user/default/workflows"
         self.status_file = self.status_dir / "status"
         self.shutdown_endpoint = os.getenv("SHUTDOWN_ENDPOINT", "https://your-api.com/shutdown")
         self.check_interval = int(os.getenv("IDLE_CHECK_INTERVAL", "30"))  # 5 minutes
@@ -21,8 +25,9 @@ class IdleDetectorExtension:
         self.monitor_thread = None
         self.running = False
         
-        # Ensure status directory exists
+        # Ensure directories exist
         self.status_dir.mkdir(exist_ok=True)
+        self.workflows_path.mkdir(exist_ok=True)
         
         # Initialize status file and start monitoring
         self._update_status("active")
@@ -181,6 +186,24 @@ class IdleDetectorExtension:
     def get_status_data(self):
         """Get current status data"""
         return self._get_status()
+
+    def save_workflow_data(self, data, filename):
+        """Saves workflow data to the workflows directory."""
+        if not filename:
+            print("Error: No filename provided for auto-save.")
+            return None
+
+        try:
+            # Sanitize filename to ensure it's just a name and not a path
+            base_filename = os.path.basename(filename)
+            filepath = self.workflows_path / base_filename
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+            print(f"Workflow auto-saved to {filepath}")
+            return str(filepath)
+        except Exception as e:
+            print(f"Error during workflow auto-save: {e}")
+            return None
 
 
 # Global extension instance

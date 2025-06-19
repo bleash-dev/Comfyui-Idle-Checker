@@ -20,3 +20,19 @@ def setup_routes():
     async def get_status(request):
         status_data = idle_detector.get_status_data()
         return web.json_response(status_data)
+
+    @PromptServer.instance.routes.post("/idle_detector/autosave")
+    async def autosave_workflow(request):
+        """Endpoint to autosave a workflow."""
+        request_data = await request.json()
+        workflow_data = request_data.get("workflow")
+        filename = request_data.get("filename")
+
+        if not workflow_data or not filename:
+            return web.json_response({"status": "error", "message": "Missing workflow data or filename"}, status=400)
+
+        filepath = idle_detector.save_workflow_data(workflow_data, filename)
+        if filepath:
+            return web.json_response({"status": "success", "message": f"Workflow saved to {filepath}"})
+        else:
+            return web.json_response({"status": "error", "message": "Failed to save workflow"}, status=500)

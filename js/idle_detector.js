@@ -7,12 +7,58 @@ class IdleDetectorExtension {
         this.activityTimeout = null;
         this.inactivityThreshold = 60000; // 1 minute of no activity before considering idle
         
+        this.autoSaveTimeout = null;
+        this.autoSaveThreshold = 5000; // 5 seconds for auto-save
+
         this.setupEventListeners();
         this.setupVisibilityAPI();
         this.setupActivityTracking();
         
         // Set initial status to active
         this.setStatus('active');
+        this.onUserActivity(); // Start timers to enable auto-saving from the start
+    }
+
+    setupFilenameTracking() {
+        // When a workflow is loaded from the server list, ComfyUI doesn't set app.graph_filename.
+        // We patch the loader to ensure the filename is tracked for autosaving.
+        const originalLoader = app.loadWorkflowFromServer;
+        if (!originalLoader.isPatchedByIdleDetector) {
+            app.loadWorkflowFromServer = async function (filename) {
+                app.graph_filename = filename;
+                console.log("Idle Detector: 📁 Server-side workflow loaded:", filename);
+                const result = await originalLoader.call(app, filename);
+                return result;
+            };
+            app.loadWorkflowFromServer.isPatchedByIdleDetector = true;
+        }
+
+        // When the graph is cleared (e.g., new workflow), we should reset the filename.
+        const originalClear = app.graph.clear;
+        if (!originalClear.isPatchedByIdleDetector) {
+            app.graph.clear = function () {
+                app.graph_filename = null;
+                console.log("Idle Detector: 📋 Graph cleared, filename reset for autosave.");
+                originalClear.apply(app.graph, arguments);
+            };
+            app.graph.clear.isPatchedByIdleDetector = true;
+        }
+
+        // To handle file uploads via the "Load" button or drag-and-drop, we patch app.handleFile.
+        // This ensures we capture the filename for any user-uploaded workflow.
+        const originalHandleFile = app.handleFile;
+        if (!originalHandleFile.isPatchedByIdleDetector) {
+            app.handleFile = async function (file) {
+                const result = await originalHandleFile.apply(app, arguments);
+                // After the original function runs, if a workflow was loaded,
+                // app.graph_filename will be set. We log this to confirm our tracking works.
+                if (file?.name?.endsWith(".json") && app.graph_filename === file.name) {
+                    console.log("Idle Detector: 📂 Workflow file upload tracked:", file.name);
+                }
+                return result;
+            };
+            app.handleFile.isPatchedByIdleDetector = true;
+        }
     }
 
     setupEventListeners() {
@@ -116,6 +162,12 @@ class IdleDetectorExtension {
 
         // Start new idle timer
         this.startIdleTimer();
+
+        // Clear and restart auto-save timer
+        if (this.autoSaveTimeout) {
+            clearTimeout(this.autoSaveTimeout);
+        }
+        this.startAutoSaveTimer();
     }
 
     startIdleTimer() {
@@ -131,6 +183,41 @@ class IdleDetectorExtension {
                 this.setStatus('idle');
             }
         }, this.inactivityThreshold);
+    }
+
+    startAutoSaveTimer() {
+        this.autoSaveTimeout = setTimeout(() => {
+            this.autoSaveWorkflow();
+        }, this.autoSaveThreshold);
+    }
+
+    async autoSaveWorkflow() {
+        console.log("Auto-saving workflow due to inactivity...");
+        try {
+            const filename = app.graph_filename || "autosave.json";
+            const workflow = app.graph.serialize();
+            const payload = {
+                workflow: workflow,
+                filename: filename,
+            };
+
+            const response = await fetch("/idle_detector/autosave", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                console.log("Workflow auto-saved successfully:", data.message);
+            } else {
+                console.error("Failed to auto-save workflow:", response.statusText);
+            }
+        } catch (error) {
+            console.error("Error auto-saving workflow:", error);
+        }
     }
 
     async setStatus(status) {
@@ -180,6 +267,7 @@ class IdleDetectorExtension {
 app.registerExtension({
     name: "comfyui.idle.detector",
     async setup() {
-        new IdleDetectorExtension();
+        const idleDetector = new IdleDetectorExtension();
+        idleDetector.setupFilenameTracking();
     }
 });
