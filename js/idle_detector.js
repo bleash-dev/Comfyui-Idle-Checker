@@ -19,48 +19,6 @@ class IdleDetectorExtension {
         this.onUserActivity(); // Start timers to enable auto-saving from the start
     }
 
-    setupFilenameTracking() {
-        // When a workflow is loaded from the server list, ComfyUI doesn't set app.graph_filename.
-        // We patch the loader to ensure the filename is tracked for autosaving.
-        const originalLoader = app.loadWorkflowFromServer;
-        if (!originalLoader.isPatchedByIdleDetector) {
-            app.loadWorkflowFromServer = async function (filename) {
-                app.graph_filename = filename;
-                console.log("Idle Detector: 📁 Server-side workflow loaded:", filename);
-                const result = await originalLoader.call(app, filename);
-                return result;
-            };
-            app.loadWorkflowFromServer.isPatchedByIdleDetector = true;
-        }
-
-        // When the graph is cleared (e.g., new workflow), we should reset the filename.
-        const originalClear = app.graph.clear;
-        if (!originalClear.isPatchedByIdleDetector) {
-            app.graph.clear = function () {
-                app.graph_filename = null;
-                console.log("Idle Detector: 📋 Graph cleared, filename reset for autosave.");
-                originalClear.apply(app.graph, arguments);
-            };
-            app.graph.clear.isPatchedByIdleDetector = true;
-        }
-
-        // To handle file uploads via the "Load" button or drag-and-drop, we patch app.handleFile.
-        // This ensures we capture the filename for any user-uploaded workflow.
-        const originalHandleFile = app.handleFile;
-        if (!originalHandleFile.isPatchedByIdleDetector) {
-            app.handleFile = async function (file) {
-                const result = await originalHandleFile.apply(app, arguments);
-                // After the original function runs, if a workflow was loaded,
-                // app.graph_filename will be set. We log this to confirm our tracking works.
-                if (file?.name?.endsWith(".json") && app.graph_filename === file.name) {
-                    console.log("Idle Detector: 📂 Workflow file upload tracked:", file.name);
-                }
-                return result;
-            };
-            app.handleFile.isPatchedByIdleDetector = true;
-        }
-    }
-
     setupEventListeners() {
         // Track various user interactions
         const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
@@ -194,8 +152,23 @@ class IdleDetectorExtension {
     async autoSaveWorkflow() {
         console.log("Auto-saving workflow due to inactivity...");
         try {
-            const filename = app.graph_filename || "autosave.json";
-            const workflow = app.graph.serialize();
+            // Get workflow data from localStorage, which holds the current graph state.
+            const workflowJSON = localStorage.getItem("workflow");
+            if (!workflowJSON) {
+                console.log("Idle Detector: No active workflow in localStorage to save.");
+                return;
+            }
+            const workflow = JSON.parse(workflowJSON);
+
+            // Don't save an empty workflow.
+            if (!workflow.nodes || workflow.nodes.length === 0) {
+                console.log("Idle Detector: Skipping auto-save for empty workflow.");
+                return;
+            }
+
+            // Determine the filename from localStorage state.
+            const  filename = localStorage.getItem("Comfy.PreviousWorkflow")?? "autosave.json";
+
             const payload = {
                 workflow: workflow,
                 filename: filename,
@@ -211,7 +184,7 @@ class IdleDetectorExtension {
 
             if (response.ok) {
                 const data = await response.json();
-                console.log("Workflow auto-saved successfully:", data.message);
+                console.log(`Workflow auto-saved successfully to ${filename}:`, data.message);
             } else {
                 console.error("Failed to auto-save workflow:", response.statusText);
             }
