@@ -54,40 +54,56 @@ class IdleDetectorExtension:
                 self.workflows_path.mkdir(parents=True, exist_ok=True)
                 print(f"Idle Detector: Using temp workflows directory: {self.workflows_path}")
         
-        # Initialize status file and start monitoring
-        self._update_status("active")
+        # Initialize status file with current timestamp as last_active
+        self._initialize_status_file()
         self.start_monitoring()
         print("Idle Detector Extension initialized and monitoring started")
 
-    def _update_status(self, status):
-        """Update the status file with current status and timestamp"""
+    def _initialize_status_file(self):
+        """Initialize status file with original last_active timestamp"""
+        if not self.status_file.exists():
+            status_data = {
+                "last_active": datetime.now().isoformat(),
+                "initialized": datetime.now().isoformat()
+            }
+            
+            try:
+                with open(self.status_file, 'w') as f:
+                    json.dump(status_data, f)
+                print(f"Idle Detector: Initialized status file with timestamp: {status_data['last_active']}")
+            except Exception as e:
+                print(f"Idle Detector: Error initializing status file: {e}")
+
+    def _update_last_active(self):
+        """Update only the last_active timestamp - called by frontend"""
         status_data = {
-            "status": status,
-            "timestamp": datetime.now().isoformat(),
-            "last_active": datetime.now().isoformat() if status == "active" else self._get_last_active()
+            "last_active": datetime.now().isoformat()
         }
         
-        try:
-            with open(self.status_file, 'w') as f:
-                json.dump(status_data, f)
-        except Exception as e:
-            print(f"Idle Detector: Error updating status file: {e}")
-
-    def _get_status(self):
-        """Read current status from file"""
+        # Preserve existing data if file exists
         try:
             if self.status_file.exists():
                 with open(self.status_file, 'r') as f:
-                    return json.load(f)
-            return {"status": "active", "timestamp": datetime.now().isoformat(), "last_active": datetime.now().isoformat()}
+                    existing_data = json.load(f)
+                    status_data.update(existing_data)
+                    status_data["last_active"] = datetime.now().isoformat()
+            
+            with open(self.status_file, 'w') as f:
+                json.dump(status_data, f)
         except Exception as e:
-            print(f"Idle Detector: Error reading status file: {e}")
-            return {"status": "active", "timestamp": datetime.now().isoformat(), "last_active": datetime.now().isoformat()}
+            print(f"Idle Detector: Error updating last_active: {e}")
 
     def _get_last_active(self):
-        """Get the last active timestamp"""
-        status_data = self._get_status()
-        return status_data.get("last_active", datetime.now().isoformat())
+        """Get the last active timestamp from file"""
+        try:
+            if self.status_file.exists():
+                with open(self.status_file, 'r') as f:
+                    data = json.load(f)
+                    return data.get("last_active", datetime.now().isoformat())
+            return datetime.now().isoformat()
+        except Exception as e:
+            print(f"Idle Detector: Error reading last_active: {e}")
+            return datetime.now().isoformat()
 
     def _get_current_pod_id(self):
         """Get current RunPod ID using multiple fallback methods"""
@@ -172,27 +188,23 @@ class IdleDetectorExtension:
         
         while self.running:
             try:
-                status_data = self._get_status()
-                current_status = status_data.get("status", "active")
-                last_active_str = status_data.get("last_active", datetime.now().isoformat())
-                
+                # Simply read the last_active timestamp from file
+                last_active_str = self._get_last_active()
                 last_active = datetime.fromisoformat(last_active_str.replace('Z', '+00:00').replace('+00:00', ''))
                 now = datetime.now()
                 
-                if current_status == "idle":
-                    idle_duration = (now - last_active).total_seconds()
-                    print(f"Idle Detector: Pod idle for {idle_duration/60:.1f} minutes (threshold: {self.idle_threshold/60:.1f} minutes)")
-                    
-                    if idle_duration >= self.idle_threshold:
-                        print(f"Idle Detector: Pod has been idle for {idle_duration/60:.1f} minutes. Initiating shutdown...")
-                        pod_id = self._get_current_pod_id()
-                        if self._call_shutdown_endpoint(pod_id):
-                            print("Idle Detector: Shutdown initiated successfully")
-                        else:
-                            print("Idle Detector: Failed to initiate shutdown")
-                        break
+                idle_duration = (now - last_active).total_seconds()
+                
+                if idle_duration >= self.idle_threshold:
+                    print(f"Idle Detector: Pod has been idle for {idle_duration/60:.1f} minutes. Initiating shutdown...")
+                    pod_id = self._get_current_pod_id()
+                    if self._call_shutdown_endpoint(pod_id):
+                        print("Idle Detector: Shutdown initiated successfully")
+                    else:
+                        print("Idle Detector: Failed to initiate shutdown")
+                    break
                 else:
-                    print(f"Idle Detector: Pod status: {current_status}")
+                    print(f"Idle Detector: Pod active - last activity {idle_duration/60:.1f} minutes ago")
                 
                 time.sleep(self.check_interval)
                 
@@ -217,15 +229,25 @@ class IdleDetectorExtension:
 
     def set_active(self):
         """Set status to active - called by frontend"""
-        self._update_status("active")
+        self._update_last_active()
 
     def set_idle(self):
-        """Set status to idle - called by frontend"""
-        self._update_status("idle")
+        """Set status to idle - called by frontend (not used in simplified approach)"""
+        pass  # No longer needed - backend determines idle based on time
 
     def get_status_data(self):
         """Get current status data"""
-        return self._get_status()
+        last_active_str = self._get_last_active()
+        last_active = datetime.fromisoformat(last_active_str.replace('Z', '+00:00').replace('+00:00', ''))
+        now = datetime.now()
+        idle_duration = (now - last_active).total_seconds()
+        
+        return {
+            "last_active": last_active_str,
+            "idle_duration_seconds": idle_duration,
+            "idle_threshold_seconds": self.idle_threshold,
+            "is_idle": idle_duration >= self.idle_threshold
+        }
 
     def save_workflow_data(self, data, filename):
         """Saves workflow data to the workflows directory."""

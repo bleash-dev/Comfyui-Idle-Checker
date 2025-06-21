@@ -194,18 +194,20 @@ class IdleDetectorExtension {
     }
 
     async setStatus(status) {
-        if (this.isActive === (status === 'active')) {
+        // Only send active signals to backend, never send idle
+        if (status !== 'active') {
+            this.isActive = false;
+            return; // Don't send idle signals to backend
+        }
+
+        if (this.isActive === true) {
             return; // No change needed
         }
 
-        this.isActive = (status === 'active');
+        this.isActive = true;
 
         try {
-            const endpoint = status === 'active' ? 
-                '/idle_detector/set_active' : 
-                '/idle_detector/set_idle';
-            
-            const response = await fetch(endpoint, {
+            const response = await fetch('/idle_detector/set_active', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
