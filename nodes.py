@@ -8,16 +8,15 @@ from datetime import datetime
 from pathlib import Path
 import folder_paths
 
-# Find the ComfyUI root directory to locate the workflows folder
-comfyui_root_path = Path(__file__).parent.parent.parent
-
 class IdleDetectorExtension:
     """
     A global extension that monitors ComfyUI idle status and automatically shuts down idle pods
     """
     
     def __init__(self):
-        self.status_dir = Path.home() / ".custom_pod_stats"
+        # Get config root from environment or default to /root
+        self.config_root = os.getenv("CONFIG_ROOT", "/root")
+        self.status_dir = Path(self.config_root) / ".custom_pod_stats"
         
         # Use ComfyUI's base path for workflows directory
         comfyui_base = Path(folder_paths.base_path)
@@ -29,6 +28,12 @@ class IdleDetectorExtension:
         self.idle_threshold = int(os.getenv("IDLE_THRESHOLD", "900"))  # 15 minutes
         self.monitor_thread = None
         self.running = False
+        
+        # Get Python command from environment or use default
+        self.python_cmd = os.getenv("PYTHON_CMD", f"python{os.getenv('PYTHON_VERSION', '3.10')}")
+        
+        print(f"Idle Detector: Using config root: {self.config_root}")
+        print(f"Idle Detector: Using Python command: {self.python_cmd}")
         
         # Ensure directories exist
         try:
