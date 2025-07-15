@@ -17,15 +17,20 @@ class IdleDetectorExtension:
         # Get config root from environment or default to /root
         self.config_root = os.getenv("CONFIG_ROOT", "/root")
         self.status_dir = Path(self.config_root) / ".custom_pod_stats"
+
+        self.user_id = os.getenv("POD_USER_NAME", "unknown")
         
         # Use ComfyUI's base path for workflows directory
         comfyui_base = Path(folder_paths.base_path)
         self.workflows_path = comfyui_base / "user" / "default" / "workflows"
         
         self.status_file = self.status_dir / "status"
-        self.shutdown_endpoint = os.getenv("SHUTDOWN_ENDPOINT", "https://your-api.com/shutdown")
+        self.api_base_url = os.getenv("API_BASE_URL", "https://your-api.com")
+        self.shutdown_endpoint = f"{self.api_base_url}/pods/shutdown"
         self.check_interval = int(os.getenv("IDLE_CHECK_INTERVAL", "30"))  # 30 seconds
         self.idle_threshold = int(os.getenv("IDLE_THRESHOLD", "900"))  # 15 minutes
+        self.waiting_time = int(os.getenv("IDLE_WAITING_TIME", "3600"))  # 1 hour default
+        self.user_pod_id = os.getenv("POD_ID", "unknown")
         self.monitor_thread = None
         self.running = False
         
@@ -34,6 +39,9 @@ class IdleDetectorExtension:
         
         print(f"Idle Detector: Using config root: {self.config_root}")
         print(f"Idle Detector: Using Python command: {self.python_cmd}")
+        print(f"Idle Detector: Using API base URL: {self.api_base_url}")
+        print(f"Idle Detector: Idle threshold: {self.idle_threshold}s, "
+              f"waiting time: {self.waiting_time}s")
         
         # Ensure directories exist
         try:
@@ -90,6 +98,14 @@ class IdleDetectorExtension:
             
             with open(self.status_file, 'w') as f:
                 json.dump(status_data, f)
+                
+            # Call refresh-idle endpoint to update backend
+            pod_id = self._get_current_pod_id()
+            if pod_id and pod_id != "unknown":
+                self._call_refresh_idle_endpoint(pod_id)
+            else:
+                print("Idle Detector: No valid pod ID, skipping refresh-idle call")
+                
         except Exception as e:
             print(f"Idle Detector: Error updating last_active: {e}")
 
@@ -153,6 +169,8 @@ class IdleDetectorExtension:
         try:
             params = {
                 "pod_id": pod_id,
+                "userId": self.user_id,
+                "userPodId": self.user_pod_id,
                 "timestamp": int(time.time())
             }
             headers = {"Content-Type": "application/json"}
@@ -169,10 +187,45 @@ class IdleDetectorExtension:
                 timeout=30
             )
 
-            print(f"Idle Detector: Shutdown endpoint called for pod {pod_id}. Response: {response.status_code}")
-            return response.status_code == 200
+            print(f"Idle Detector: Shutdown endpoint called for pod {pod_id}. Response: {response}")
+            return '20' in f"{response.status_code}"
         except Exception as e:
             print(f"Idle Detector: Error calling shutdown endpoint: {e}")
+            return False
+
+    def _call_refresh_idle_endpoint(self, pod_id):
+        """Call the refresh-idle endpoint to reset idle timer"""
+        try:
+            endpoint_url = f"{self.api_base_url}/pods/{self.user_pod_id}/refresh-idle"
+            payload = {
+                "timeout": self.idle_threshold,
+                "userId": self.user_id,
+                "waitingTime": self.waiting_time
+            }
+            headers = {"Content-Type": "application/json"}
+            
+            # Add signature if available
+            signature = self._get_hmac_signature(payload=payload)
+            if signature:
+                headers["X-Signature"] = signature
+            
+            response = requests.post(
+                endpoint_url,
+                json=payload,
+                headers=headers,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                print(f"Idle Detector: Refreshed idle timer for pod {pod_id}")
+                return True
+            else:
+                print(f"Idle Detector: Failed refresh for pod {pod_id}. "
+                      f"Status: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            print(f"Idle Detector: Error calling refresh-idle endpoint: {e}")
             return False
 
     def _monitor_loop(self):
