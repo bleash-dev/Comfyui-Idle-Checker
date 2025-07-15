@@ -242,7 +242,6 @@ class IdleDetectorExtension {
 app.registerExtension({
     name: "comfyui.idle.detector",
     async setup() {
-        const idleDetector = new IdleDetectorExtension();
-        idleDetector.setupFilenameTracking();
+        new IdleDetectorExtension();
     }
 });

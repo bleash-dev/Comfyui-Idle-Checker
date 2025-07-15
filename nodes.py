@@ -108,19 +108,13 @@ class IdleDetectorExtension:
     def _get_current_pod_id(self):
         """Get current RunPod ID using multiple fallback methods"""
         
-        # Method 1: Check environment variable first
-        env_pod_id = os.getenv("POD_ID", "")
-        if env_pod_id and env_pod_id != "unknown":
-            print(f"Idle Detector: Found pod ID from POD_ID environment variable: {env_pod_id}")
-            return env_pod_id
-        
-        # Method 2: Check RunPod-specific environment variable
+        # Method 1: Check RunPod-specific environment variable
         runpod_pod_id = os.getenv("RUNPOD_POD_ID", "")
         if runpod_pod_id and runpod_pod_id != "unknown":
             print(f"Idle Detector: Found pod ID from RUNPOD_POD_ID environment variable: {runpod_pod_id}")
             return runpod_pod_id
-        
-        # Method 3: Check RunPod metadata file
+
+        # Method 2: Check RunPod metadata file
         try:
             metadata_file = Path("/runpod-volume/runpod.json")
             if metadata_file.exists():
@@ -136,7 +130,7 @@ class IdleDetectorExtension:
         print("Idle Detector: Could not determine pod ID, using 'unknown'")
         return "unknown"
     
-    def _get_hmac_signature(self):
+    def _get_hmac_signature(self, payload):
         """Generate HMAC signature for secure API calls"""
         try:
             import hmac
@@ -145,12 +139,8 @@ class IdleDetectorExtension:
             if not secret_key:
                 print("Idle Detector: WEBHOOK_SECRET_KEY environment variable is not set")
                 return None
-            pod_id = self._get_current_pod_id()
 
-            message = json.dumps({
-                "pod_id": pod_id,
-                "timestamp": int(time.time())
-            })
+            message = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
 
             signature = hmac.new(secret_key.encode(), message.encode(), hashlib.sha256).hexdigest()
             return signature
@@ -161,11 +151,14 @@ class IdleDetectorExtension:
     def _call_shutdown_endpoint(self, pod_id):
         """Call the shutdown endpoint with pod ID"""
         try:
-            params = {"pod_id": pod_id}
+            params = {
+                "pod_id": pod_id,
+                "timestamp": int(time.time())
+            }
             headers = {"Content-Type": "application/json"}
             
             # Add signature if available
-            signature = self._get_hmac_signature()
+            signature = self._get_hmac_signature(payload=params)
             if signature:
                 headers["X-Signature"] = signature
             
